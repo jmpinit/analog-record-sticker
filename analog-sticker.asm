@@ -10,7 +10,12 @@
     nop     ; timer0 overflow
     nop     ; eeprom ready
     nop     ; analog comparator
-    nop     ; conversion_done
+    rjmp    conversion_done
+
+conversion_done:
+    in      r20, ADCH
+    out     OCR0A, r20
+    reti
 
 delay:
     clr     r0
@@ -27,8 +32,22 @@ reset:
     out     SPL, r16
 
     ; setup pins for IO
-    ldi     r16, 0xff
-    out     DDRB, r16
+    sbi     DDRB, PB0   ; PWM
+    cbi     DDRB, PB2   ; A1
+
+    ; setup ADC
+
+    ; left adjusted
+    ldi     r16, (1 << ADLAR) | (1 << MUX0)
+    out     ADMUX, r16
+
+    ; enable, start, run free, enable interrupt, divide clock by 128
+    ldi     r16, (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADIE) | (7 << ADPS0)
+    out     ADCSRA, r16
+
+    ; reduce power consumption by disabling digital in
+    ldi     r16, (1 << ADC1D)
+    out     DIDR0, r16
 
     ; setup PWM
 
@@ -41,19 +60,11 @@ reset:
     out     TCCR0B, r16
 
     ; set frequency
-    ldi     r16, 127
+    ldi     r16, 0
     out     OCR0A, r16
 
+    ; enable interrupts
+    sei
+
 blink_loop:
-    dec     r17
-    out     OCR0A, r17
-
-    ldi     r16, 250
-    rcall   delay
-
-    cpi     r17, 0
-    brne    blink_loop
-
-    sbi     PINB, PB1
-
     rjmp    blink_loop
