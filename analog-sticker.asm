@@ -1,18 +1,34 @@
 .include "tn85def.inc"
 
+.define STACK_SIZE      12 ; bytes
+.define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
+
 .define PIN_IN          PB2
 .define PIN_OUT         PB0
 .define PIN_RECORD      PB1
 .define PIN_TRIGGER     PB4
 .define PIN_DONE        PB3
 
-.def scrap           = r19
-.def irq_scrap       = r20
-.def recording       = r21
-.def buffer_ptr_l    = r22
-.def buffer_ptr_h    = r23
+.define RECORDING       0
+.define PLAYING         1
 
-    ;out     OCR0A, r20
+.def scrap           = r19
+.def sreg_save       = r20
+.def irq_scrap_a     = r21
+.def irq_scrap_b     = r22
+.def flags           = r23
+
+.macro reset_buffer_ptr
+    ldi     XL, low(SRAM_START)
+    ldi     XH, high(SRAM_START)
+.endm
+
+.macro breq_16
+    cpi     XH, high(@1)
+    brne    @0
+    cpi     XL, low(@1)
+    brne    @0
+.endm
 
 .cseg
 .org 0
@@ -24,17 +40,48 @@
     nop     ; timer0 overflow
     nop     ; eeprom ready
     nop     ; analog comparator
-    rjmp    conversion_done
-
-conversion_done:
-    in      irq_scrap, ADCH
-    ; if recording
-    ;   save to current position in buffer
-    ;   increment position
-    reti
+    nop     ; conversion_done
 
 timer_tick:
-    sbi     PINB, PIN_DONE
+    in      sreg_save, SREG
+
+; if recording
+    sbrs    flags, RECORDING
+    rjmp    not_recording
+
+    sbi     PINB, PIN_DONE ; FIXME
+
+    ; read adc
+    in      irq_scrap_a, ADCH
+
+    ; save adc reading at current buffer index
+    ; and increment index
+    st      X+, irq_scrap_a
+
+not_recording:
+
+; if playing back
+    sbrs    flags, PLAYING
+    rjmp    not_playing
+
+    ; read data from buffer
+    ld      irq_scrap_a, X+
+
+    ; playback via pwm
+    ldi     irq_scrap_b, 255
+    sub     irq_scrap_b, irq_scrap_a ; flipped for PWM
+    out     OCR0A, irq_scrap_b
+
+not_playing:
+
+    ; check if at end of buffer
+    breq_16 timer_done, DATA_END
+
+    ; at end of buffer
+    ; so stop what we were doing
+    clr     flags
+timer_done:
+    out     SREG, sreg_save
     reti
 
 delay:
@@ -52,8 +99,10 @@ reset:
     out     SPL, r16
 
     ; setup pins for IO
-    sbi     DDRB, PIN_OUT   ; PWM
-    cbi     DDRB, PIN_IN    ; A1
+    cbi     DDRB, PIN_IN
+    sbi     DDRB, PIN_OUT
+    cbi     DDRB, PIN_RECORD
+    cbi     DDRB, PIN_TRIGGER
     sbi     DDRB, PIN_DONE
 
     ; setup ADC
@@ -62,8 +111,8 @@ reset:
     ldi     r16, (1 << ADLAR) | (1 << MUX0)
     out     ADMUX, r16
 
-    ; enable, start, run free, enable interrupt, divide clock by 128
-    ldi     r16, (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADIE) | (7 << ADPS0)
+    ; enable, start, run free, divide clock by 128
+    ldi     r16, (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (7 << ADPS0)
     out     ADCSRA, r16
 
     ; reduce power consumption by disabling digital in
@@ -84,6 +133,10 @@ reset:
     ldi     r16, 0
     out     OCR0A, r16
 
+    ; start at 0 volts
+    ldi     r16, 255
+    out     OCR0A, r16
+
     ; setup sample timer
 
     ; clear on match & prescaler set to divide by 4096
@@ -101,8 +154,15 @@ reset:
 
     ; setup application state
 
-    clr     buffer_ptr_l
-    clr     buffer_ptr_h
+    ; initialize buffer
+    reset_buffer_ptr
+    ldi     r16, 0
+write_loop:
+    st      X+, r16
+    breq_16 done_writing, DATA_END
+    rjmp    write_loop
+done_writing:
+    reset_buffer_ptr
 
     ; enable interrupts
     sei
@@ -110,16 +170,29 @@ reset:
     rjmp    start
 
 start_playback:
+    sbrc    flags, RECORDING
+    rjmp    blocked_by_recording
+
+    reset_buffer_ptr
+    sbr     flags, (1 << PLAYING)
     rjmp    wait_loop
 
 start_recording:
+    sbrc    flags, RECORDING
+    rjmp    blocked_by_recording
+
+    reset_buffer_ptr
+    sbr     flags, (1 << RECORDING)
+    cbr     flags, (1 << PLAYING)
+blocked_by_recording:
     rjmp    wait_loop
 
 start:
-    rjmp    start
 wait_loop:
     sbic    PINB, PIN_RECORD
     rjmp    start_recording
+    sbis    PINB, PIN_RECORD ; when record button not pressed
+    cbr     flags, (1 << RECORDING) ; not recording
 
     sbic    PINB, PIN_TRIGGER
     rjmp    start_playback
