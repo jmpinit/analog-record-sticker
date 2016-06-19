@@ -59,8 +59,6 @@ timer_tick_sample:
     sbrs    flags, RECORDING
     rjmp    not_recording
 
-    sbi     PINB, PIN_DONE ; FIXME
-
     ; read adc
     in      irq_scrap_a, ADCH
 
@@ -108,10 +106,8 @@ delay_loop:
 ; overwrite the sample buffer with zeroes
 clear_buffer:
     reset_buffer_ptr
-    ldi     r17, 1
     ldi     r16, 0
 write_loop:
-    add     r16, r17
     st      X+, r16
     brne_16 write_loop, DATA_END
 done_writing:
@@ -201,7 +197,6 @@ start_recording:
     sbrc    flags, RECORDING
     rjmp    blocked_by_recording
 
-    sbi     PINB, PIN_DONE
     rcall   clear_buffer
 
     sbr     flags, (1 << RECORDING)
@@ -211,14 +206,13 @@ blocked_by_recording:
 
 start:
 wait_loop:
-    ;sbic    PINB, PIN_RECORD
-    ;rjmp    start_recording
-    ;sbis    PINB, PIN_RECORD ; when record button not pressed
-    ;cbr     flags, (1 << RECORDING) ; not recording
+    sbic    PINB, PIN_RECORD
+    rjmp    start_recording
+    sbis    PINB, PIN_RECORD ; when record button not pressed
+    cbr     flags, (1 << RECORDING) ; not recording
 
-    ;sbic    PINB, PIN_TRIGGER
-    ;rjmp    start_playback
-    sbr     flags, (1 << PLAYING)
+    sbic    PINB, PIN_TRIGGER
+    rjmp    start_playback
 
     rjmp    wait_loop
 
