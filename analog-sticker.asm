@@ -12,6 +12,7 @@
 .define RECORDING       0
 .define PLAYING         1
 
+.def zero            = r15
 .def scrap           = r19
 .def sreg_save       = r20
 .def irq_scrap_a     = r21
@@ -23,7 +24,7 @@
     ldi     XH, high(SRAM_START)
 .endm
 
-.macro breq_16
+.macro brne_16
     cpi     XH, high(@1)
     brne    @0
     cpi     XL, low(@1)
@@ -45,6 +46,15 @@
 timer_tick:
     in      sreg_save, SREG
 
+    ; check if at end of buffer
+    brne_16 timer_tick_sample, DATA_END
+
+    ; at end of buffer
+    ; so stop what we were doing
+    clr     flags
+    rjmp    timer_done
+
+timer_tick_sample:
 ; if recording
     sbrs    flags, RECORDING
     rjmp    not_recording
@@ -68,18 +78,19 @@ not_recording:
     ld      irq_scrap_a, X+
 
     ; playback via pwm
-    ldi     irq_scrap_b, 255
-    sub     irq_scrap_b, irq_scrap_a ; flipped for PWM
-    out     OCR0A, irq_scrap_b
+
+    ; linearize output using lookup table
+    ldi     ZH, high(analog_out_lookup << 1)
+    ldi     ZL, low(analog_out_lookup << 1)
+    add     ZL, irq_scrap_a
+    adc     ZH, zero
+
+    lpm     irq_scrap_a, Z
+
+    out     OCR0A, irq_scrap_a
 
 not_playing:
 
-    ; check if at end of buffer
-    breq_16 timer_done, DATA_END
-
-    ; at end of buffer
-    ; so stop what we were doing
-    clr     flags
 timer_done:
     out     SREG, sreg_save
     reti
@@ -97,11 +108,12 @@ delay_loop:
 ; overwrite the sample buffer with zeroes
 clear_buffer:
     reset_buffer_ptr
+    ldi     r17, 1
     ldi     r16, 0
 write_loop:
+    add     r16, r17
     st      X+, r16
-    breq_16 done_writing, DATA_END
-    rjmp    write_loop
+    brne_16 write_loop, DATA_END
 done_writing:
     reset_buffer_ptr
     ret
@@ -162,7 +174,7 @@ reset:
 
     ; interrupt 512 times in 60 seconds (with prescaler at 4096 and 8 MHz system clk)
     ; calculated by 8 MHz / 4096 / (512 bytes / 60 seconds)
-    ldi     r16, 229
+    ldi     r16, 57;229
     out     OCR1C, r16
 
     ; setup application state
@@ -189,6 +201,7 @@ start_recording:
     sbrc    flags, RECORDING
     rjmp    blocked_by_recording
 
+    sbi     PINB, PIN_DONE
     rcall   clear_buffer
 
     sbr     flags, (1 << RECORDING)
@@ -198,12 +211,15 @@ blocked_by_recording:
 
 start:
 wait_loop:
-    sbic    PINB, PIN_RECORD
-    rjmp    start_recording
-    sbis    PINB, PIN_RECORD ; when record button not pressed
-    cbr     flags, (1 << RECORDING) ; not recording
+    ;sbic    PINB, PIN_RECORD
+    ;rjmp    start_recording
+    ;sbis    PINB, PIN_RECORD ; when record button not pressed
+    ;cbr     flags, (1 << RECORDING) ; not recording
 
-    sbic    PINB, PIN_TRIGGER
-    rjmp    start_playback
+    ;sbic    PINB, PIN_TRIGGER
+    ;rjmp    start_playback
+    sbr     flags, (1 << PLAYING)
 
     rjmp    wait_loop
+
+.include "lookup.asm"
