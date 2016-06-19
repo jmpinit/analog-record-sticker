@@ -84,6 +84,7 @@ timer_done:
     out     SREG, sreg_save
     reti
 
+; delay by time proportional to contents of r16
 delay:
     clr     r0
 delay_loop:
@@ -91,6 +92,18 @@ delay_loop:
     brne    delay_loop
     dec     r16
     brne    delay
+    ret
+
+; overwrite the sample buffer with zeroes
+clear_buffer:
+    reset_buffer_ptr
+    ldi     r16, 0
+write_loop:
+    st      X+, r16
+    breq_16 done_writing, DATA_END
+    rjmp    write_loop
+done_writing:
+    reset_buffer_ptr
     ret
 
 reset:
@@ -155,19 +168,14 @@ reset:
     ; setup application state
 
     ; initialize buffer
-    reset_buffer_ptr
-    ldi     r16, 0
-write_loop:
-    st      X+, r16
-    breq_16 done_writing, DATA_END
-    rjmp    write_loop
-done_writing:
-    reset_buffer_ptr
+    rcall   clear_buffer
 
     ; enable interrupts
     sei
 
     rjmp    start
+
+; MAIN PROGRAM
 
 start_playback:
     sbrc    flags, RECORDING
@@ -181,7 +189,8 @@ start_recording:
     sbrc    flags, RECORDING
     rjmp    blocked_by_recording
 
-    reset_buffer_ptr
+    rcall   clear_buffer
+
     sbr     flags, (1 << RECORDING)
     cbr     flags, (1 << PLAYING)
 blocked_by_recording:
