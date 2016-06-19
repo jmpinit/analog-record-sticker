@@ -1,3 +1,9 @@
+analog-sticker.bin: analog-sticker.hex
+	avr-objcopy -I ihex -O binary analog-sticker.hex analog-sticker.bin
+
+analog-sticker.elf: analog-sticker.bin
+	avr-objcopy -I binary -O elf32-avr analog-sticker.bin analog-sticker.elf
+
 analog-sticker.hex: analog-sticker.asm
 	avra analog-sticker.asm
 

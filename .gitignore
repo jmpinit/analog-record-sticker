@@ -2,3 +2,5 @@
 *.eep.hex
 *.hex
 *.obj
+*.bin
+*.elf
