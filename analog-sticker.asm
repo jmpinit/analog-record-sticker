@@ -2,6 +2,13 @@
 
 .define STACK_SIZE      12 ; bytes
 .define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
+.define SAMPLE_COUNT    (DATA_END-SRAM_START)
+
+.define F_CPU           8000000
+.define SAMPLE_TIME     30 ; seconds
+.define SAMPLES_PER_SEC (SAMPLE_COUNT / SAMPLE_TIME)
+.define SAMPLE_TOP      (F_CPU / 4096 / SAMPLES_PER_SEC)
+.define DEBOUNCE_TICKS  2 ; sample ticks
 
 .define PIN_IN          PB2
 .define PIN_OUT         PB0
@@ -9,15 +16,31 @@
 .define PIN_TRIGGER     PB4
 .define PIN_DONE        PB3
 
-.define RECORDING       0
-.define PLAYING         1
+; state flags
+.define RECORDING           0
+.define PLAYING             1
+.define LAST_PIN_RECORD     2
+.define LAST_PIN_TRIGGER    3
+.define HANDLED_RECORD      4
+.define HANDLED_TRIGGER     5
 
-.def zero            = r15
-.def scrap           = r19
-.def sreg_save       = r20
-.def irq_scrap_a     = r21
-.def irq_scrap_b     = r22
-.def flags           = r23
+; event flags
+.define RECORD_PRESSED      0
+.define RECORD_RELEASED     1
+.define TRIGGER_PRESSED     2
+.define TRIGGER_RELEASED    3
+
+; registers
+.def tick_counter       = r14
+.def zero               = r15
+.def press_record_time  = r18
+.def press_trigger_time = r19
+.def scrap              = r20
+.def sreg_save          = r21
+.def irq_scrap_a        = r22
+.def irq_scrap_b        = r23
+.def state_flags        = r24
+.def event_flags        = r25 ; r25 is last available due to pointer regs
 
 .macro reset_buffer_ptr
     ldi     XL, low(SRAM_START)
@@ -46,17 +69,22 @@
 timer_tick:
     in      sreg_save, SREG
 
+    ; so we can keep track of time
+    inc     tick_counter
+
+.include "debounce.asm"
+
     ; check if at end of buffer
     brne_16 timer_tick_sample, DATA_END
 
     ; at end of buffer
     ; so stop what we were doing
-    clr     flags
+    clr     state_flags
     rjmp    timer_done
 
 timer_tick_sample:
 ; if recording
-    sbrs    flags, RECORDING
+    sbrs    state_flags, RECORDING
     rjmp    not_recording
 
     ; read adc
@@ -69,7 +97,7 @@ timer_tick_sample:
 not_recording:
 
 ; if playing back
-    sbrs    flags, PLAYING
+    sbrs    state_flags, PLAYING
     rjmp    not_playing
 
     ; read data from buffer
@@ -168,9 +196,9 @@ reset:
     ldi     r16, (1 << OCIE1A)
     out     TIMSK, r16
 
-    ; interrupt 512 times in 60 seconds (with prescaler at 4096 and 8 MHz system clk)
-    ; calculated by 8 MHz / 4096 / (512 bytes / 60 seconds)
-    ldi     r16, 57;229
+    ; interrupt 500 times in RECORD_TIME seconds (with prescaler at 4096 and 8 MHz system clk)
+    ; calculated by 8 MHz / 4096 / (SAMPLE_COUNT bytes / RECORD_TIME seconds)
+    ldi     r16, SAMPLE_TOP
     out     OCR1C, r16
 
     ; setup application state
@@ -186,33 +214,50 @@ reset:
 ; MAIN PROGRAM
 
 start_playback:
-    sbrc    flags, RECORDING
+    sbrc    state_flags, RECORDING
     rjmp    blocked_by_recording
 
     reset_buffer_ptr
-    sbr     flags, (1 << PLAYING)
+    sbr     state_flags, (1 << PLAYING)
     rjmp    wait_loop
 
 start_recording:
-    sbrc    flags, RECORDING
+    sbrc    state_flags, RECORDING
     rjmp    blocked_by_recording
 
     rcall   clear_buffer
 
-    sbr     flags, (1 << RECORDING)
-    cbr     flags, (1 << PLAYING)
+    sbr     state_flags, (1 << RECORDING)
+    cbr     state_flags, (1 << PLAYING)
 blocked_by_recording:
     rjmp    wait_loop
 
+stop_recording:
+    cbr     state_flags, (1 << RECORDING)
+    rjmp    wait_loop
+
+handle_record_pressed:
+    cbr     event_flags, (1 << RECORD_PRESSED)
+    rjmp    start_recording
+
+handle_record_released:
+    cbr     event_flags, (1 << RECORD_RELEASED)
+    rjmp    stop_recording
+
+handle_trigger_pressed:
+    cbr     event_flags, (1 << TRIGGER_PRESSED)
+    rjmp    start_playback
+
 start:
 wait_loop:
-    sbic    PINB, PIN_RECORD
-    rjmp    start_recording
-    sbis    PINB, PIN_RECORD ; when record button not pressed
-    cbr     flags, (1 << RECORDING) ; not recording
+    sbrc    event_flags, RECORD_PRESSED
+    rjmp    handle_record_pressed
 
-    sbic    PINB, PIN_TRIGGER
-    rjmp    start_playback
+    sbrc    event_flags, RECORD_RELEASED
+    rjmp    handle_record_released
+
+    sbrc    event_flags, TRIGGER_PRESSED
+    rjmp    handle_trigger_pressed
 
     rjmp    wait_loop
 
