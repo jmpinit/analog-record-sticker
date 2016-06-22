@@ -8,7 +8,7 @@
 .define SAMPLE_TIME     30 ; seconds
 .define SAMPLES_PER_SEC (SAMPLE_COUNT / SAMPLE_TIME)
 .define SAMPLE_TOP      (F_CPU / 4096 / SAMPLES_PER_SEC)
-.define DEBOUNCE_TICKS  2 ; sample ticks
+.define DEBOUNCE_TICKS  0 ; sample ticks before firing input events
 
 .define PIN_IN          PB2
 .define PIN_OUT         PB0
@@ -47,10 +47,17 @@
     ldi     XH, high(SRAM_START)
 .endm
 
-.macro brne_16
-    cpi     XH, high(@1)
+.macro brne_i_16
+    cpi     @1, high(@3)
     brne    @0
-    cpi     XL, low(@1)
+    cpi     @2, low(@3)
+    brne    @0
+.endm
+
+.macro brne_16
+    cp      @1, @3
+    brne    @0
+    cp      @2, @4
     brne    @0
 .endm
 
@@ -75,7 +82,7 @@ timer_tick:
 .include "debounce.asm"
 
     ; check if at end of buffer
-    brne_16 timer_tick_sample, DATA_END
+    brne_i_16 timer_tick_sample, XH, XL, DATA_END
 
     ; at end of buffer
     ; so stop what we were doing
@@ -93,6 +100,7 @@ timer_tick_sample:
     ; save adc reading at current buffer index
     ; and increment index
     st      X+, irq_scrap_a
+    ;movw    YH:YL, XH:XL ; keep track of end of sample
 
 not_recording:
 
@@ -100,6 +108,14 @@ not_recording:
     sbrs    state_flags, PLAYING
     rjmp    not_playing
 
+    ;brne_16 play_sample, XH, XL, YH, YL
+
+    ; at end of recorded sample
+    ; so stop playing
+    ;cbr     state_flags, (1 << PLAYING)
+    ;rjmp    timer_done
+
+play_sample:
     ; read data from buffer
     ld      irq_scrap_a, X+
 
@@ -137,7 +153,7 @@ clear_buffer:
     ldi     r16, 0
 write_loop:
     st      X+, r16
-    brne_16 write_loop, DATA_END
+    brne_i_16 write_loop, XH, XL, DATA_END
 done_writing:
     reset_buffer_ptr
     ret
@@ -217,30 +233,35 @@ start_playback:
     sbrc    state_flags, RECORDING
     rjmp    blocked_by_recording
 
+    ; go back to beginning of buffer
     reset_buffer_ptr
+
     sbr     state_flags, (1 << PLAYING)
+blocked_by_recording:
     rjmp    wait_loop
 
 start_recording:
-    sbrc    state_flags, RECORDING
-    rjmp    blocked_by_recording
+    ; signal to stop playing
+    cbr     state_flags, (1 << PLAYING)
 
     rcall   clear_buffer
 
+    ; signal to start recording
     sbr     state_flags, (1 << RECORDING)
-    cbr     state_flags, (1 << PLAYING)
-blocked_by_recording:
+
     rjmp    wait_loop
 
 stop_recording:
     cbr     state_flags, (1 << RECORDING)
     rjmp    wait_loop
 
+; input handlers
+
 handle_record_pressed:
     cbr     event_flags, (1 << RECORD_PRESSED)
     rjmp    start_recording
 
-handle_record_released:
+handle_record_released: ; works fine
     cbr     event_flags, (1 << RECORD_RELEASED)
     rjmp    stop_recording
 
