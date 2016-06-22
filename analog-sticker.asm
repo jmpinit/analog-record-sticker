@@ -2,6 +2,7 @@
 
 ; open questions
 ;  - after playback should it stay at the last value or zero?
+;  - should the end of recording trigger a pulse on the "done" pin?
 
 .define STACK_SIZE      12 ; bytes
 .define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
@@ -34,6 +35,7 @@
 .define TRIGGER_RELEASED    3
 
 ; registers
+.def done_pulse_timer   = r13
 .def tick_counter       = r14
 .def zero               = r15
 .def press_record_time  = r18
@@ -82,6 +84,18 @@ timer_tick:
     ; so we can keep track of time
     inc     tick_counter
 
+    ; check pulse timer
+    mov     irq_scrap_a, done_pulse_timer
+    cpi     irq_scrap_a, 0
+    breq    done_pulse_handling
+
+    dec     done_pulse_timer
+    brne    done_pulse_handling
+end_pulse:
+    cbi     PORTB, PIN_DONE
+
+done_pulse_handling:
+
 .include "debounce.asm"
 
     ; check if at end of buffer
@@ -115,9 +129,19 @@ not_recording:
 
     ; at end of recorded sample
     ; so stop playing
+
+    ; set output low
     ldi     irq_scrap_a, 0xff
     out     OCR0A, irq_scrap_a
+
+    ; signal with done pin
+    ldi     irq_scrap_a, DEBOUNCE_TICKS+1
+    mov     done_pulse_timer, irq_scrap_a
+    sbi     PORTB, PIN_DONE
+
+    ; mark not playing
     cbr     state_flags, (1 << PLAYING)
+
     rjmp    timer_done
 
 play_sample:
@@ -169,11 +193,8 @@ reset:
     out     SPL, r16
 
     ; setup pins for IO
-    cbi     DDRB, PIN_IN
-    sbi     DDRB, PIN_OUT
-    cbi     DDRB, PIN_RECORD
-    cbi     DDRB, PIN_TRIGGER
-    sbi     DDRB, PIN_DONE
+    ldi     r16, (1 << PIN_OUT) | (1 << PIN_DONE)
+    out     DDRB, r16
 
     ; setup ADC
 
@@ -240,6 +261,9 @@ start_playback:
 
     ; go back to beginning of buffer
     reset_buffer_ptr
+
+    ; signal to outside world that we are playing
+    cbi     PORTB, PIN_DONE
 
     sbr     state_flags, (1 << PLAYING)
 blocked_by_recording:
