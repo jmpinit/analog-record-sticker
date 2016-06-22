@@ -1,5 +1,8 @@
 .include "tn85def.inc"
 
+; open questions
+;  - after playback should it stay at the last value or zero?
+
 .define STACK_SIZE      12 ; bytes
 .define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
 .define SAMPLE_COUNT    (DATA_END-SRAM_START)
@@ -100,7 +103,7 @@ timer_tick_sample:
     ; save adc reading at current buffer index
     ; and increment index
     st      X+, irq_scrap_a
-    ;movw    YH:YL, XH:XL ; keep track of end of sample
+    movw    YH:YL, XH:XL ; keep track of end of sample
 
 not_recording:
 
@@ -108,12 +111,14 @@ not_recording:
     sbrs    state_flags, PLAYING
     rjmp    not_playing
 
-    ;brne_16 play_sample, XH, XL, YH, YL
+    brne_16 play_sample, XH, XL, YH, YL
 
     ; at end of recorded sample
     ; so stop playing
-    ;cbr     state_flags, (1 << PLAYING)
-    ;rjmp    timer_done
+    ldi     irq_scrap_a, 0xff
+    out     OCR0A, irq_scrap_a
+    cbr     state_flags, (1 << PLAYING)
+    rjmp    timer_done
 
 play_sample:
     ; read data from buffer
