@@ -130,10 +130,6 @@ not_recording:
     ; at end of recorded sample
     ; so stop playing
 
-    ; set output low
-    ldi     irq_scrap_a, 0xff
-    out     OCR0A, irq_scrap_a
-
     ; signal with done pin
     ldi     irq_scrap_a, DEBOUNCE_TICKS+1
     mov     done_pulse_timer, irq_scrap_a
