@@ -1,3 +1,6 @@
+; this is used to solve the problem that the output of the filter is not linear
+; i.e. when putting a sawtooth wave into it you get a mushed sawtooth wave coming out
+; the table below indicates what value sent into the filter will result in the intended output
 analog_out_lookup:
     .db 255, 253, 251, 249, 247, 245, 243, 241, 239, 238, 236, 234, 233, 230, 229, 227, 
     .db 225, 223, 222, 220, 219, 217, 215, 214, 212, 211, 209, 208, 206, 205, 203, 202, 
