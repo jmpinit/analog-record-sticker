@@ -93,6 +93,7 @@ timer_tick:
     brne    done_pulse_handling
 end_pulse:
     cbi     PORTB, PIN_DONE
+    cbi     DDRB, PIN_DONE ; leave hi-z
 
 done_pulse_handling:
 
@@ -134,6 +135,7 @@ not_recording:
     ldi     irq_scrap_a, DEBOUNCE_TICKS+1
     mov     done_pulse_timer, irq_scrap_a
     sbi     PORTB, PIN_DONE
+    sbi     DDRB, PIN_DONE ; make output, normally hi-z
 
     ; mark not playing
     cbr     state_flags, (1 << PLAYING)
@@ -189,7 +191,7 @@ reset:
     out     SPL, r16
 
     ; setup pins for IO
-    ldi     r16, (1 << PIN_OUT) | (1 << PIN_DONE)
+    ldi     r16, (1 << PIN_OUT)
     out     DDRB, r16
 
     ; setup ADC
@@ -257,9 +259,6 @@ start_playback:
 
     ; go back to beginning of buffer
     reset_buffer_ptr
-
-    ; signal to outside world that we are playing
-    cbi     PORTB, PIN_DONE
 
     sbr     state_flags, (1 << PLAYING)
 blocked_by_recording:
