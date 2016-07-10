@@ -16,9 +16,9 @@
 
 .define PIN_IN          PB2
 .define PIN_OUT         PB0
-.define PIN_RECORD      PB1
-.define PIN_TRIGGER     PB4
-.define PIN_DONE        PB3
+.define PIN_RECORD      PB3
+.define PIN_TRIGGER     PB1
+.define PIN_DONE        PB4
 
 ; state flags
 .define RECORDING           0
