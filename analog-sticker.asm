@@ -35,6 +35,8 @@
 .define TRIGGER_RELEASED    3
 
 ; registers
+.def eeprom_l           = r11
+.def eeprom_h           = r12
 .def done_pulse_timer   = r13
 .def tick_counter       = r14
 .def zero               = r15
@@ -117,6 +119,7 @@ timer_tick_sample:
 
     ; save adc reading at current buffer index
     ; and increment index
+.include "eeprom-write.asm"
     st      X+, irq_scrap_a
     movw    YH:YL, XH:XL ; keep track of end of sample
 
@@ -182,6 +185,36 @@ write_loop:
     st      X+, r16
     brne_i_16 write_loop, XH, XL, DATA_END
 done_writing:
+    reset_buffer_ptr
+    ret
+
+; restore the sample buffer from eeprom
+restore_buffer:
+    reset_buffer_ptr
+
+    ; start at beginning of eeprom
+    clr     ZH
+    clr     ZL
+restore_loop:
+    ; wait for previous eeprom operation to finish
+    sbic    EECR, EEPE
+    rjmp    restore_loop
+
+    ; set eeprom address
+    out     EEARH, ZH
+    out     EEARL, ZL
+
+    ; start eeprom read by writing EERE
+    ; read value from eeprom
+    sbic    EECR, EERE ; trigger start
+    in      r16, EEDR ; get data
+
+    ; increment address
+    adiw    r31:r30, 1
+
+    st      X+, r16
+    brne_i_16 restore_loop, XH, XL, DATA_END
+done_restoring:
     reset_buffer_ptr
     ret
 
