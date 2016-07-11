@@ -7,6 +7,8 @@
 .define STACK_SIZE      12 ; bytes
 .define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
 .define SAMPLE_COUNT    (DATA_END-SRAM_START)
+.define PTR_SAVE_H      510
+.define PTR_SAVE_L      511
 
 .define F_CPU           8000000
 .define SAMPLE_TIME     30 ; seconds
@@ -206,7 +208,7 @@ restore_loop:
 
     ; start eeprom read by writing EERE
     ; read value from eeprom
-    sbic    EECR, EERE ; trigger start
+    sbi     EECR, EERE ; trigger start
     in      r16, EEDR ; get data
 
     ; increment address
@@ -214,8 +216,37 @@ restore_loop:
 
     st      X+, r16
     brne_i_16 restore_loop, XH, XL, DATA_END
+restore_ptr_h:
+    ; wait for previous eeprom operation to finish
+    sbic    EECR, EEPE
+    rjmp    restore_ptr_h
+
+    ; set eeprom address
+    ldi     r16, high(PTR_SAVE_H)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_H)
+    out     EEARL, r16
+
+    ; start eeprom read by writing EERE
+    ; read value from eeprom
+    sbi     EECR, EERE ; trigger start
+    in      YH, EEDR ; get data
+restore_ptr_l:
+    ; wait for previous eeprom operation to finish
+    sbic    EECR, EEPE
+    rjmp    restore_ptr_l
+
+    ; set eeprom address
+    ldi     r16, high(PTR_SAVE_L)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_L)
+    out     EEARL, r16
+
+    ; start eeprom read by writing EERE
+    ; read value from eeprom
+    sbi     EECR, EERE ; trigger start
+    in      YL, EEDR ; get data
 done_restoring:
-    reset_buffer_ptr
     ret
 
 reset:
@@ -277,7 +308,7 @@ reset:
     ; setup application state
 
     ; initialize buffer
-    rcall   clear_buffer
+    rcall   restore_buffer
 
     ; enable interrupts
     sei
@@ -310,6 +341,45 @@ start_recording:
 
 stop_recording:
     cbr     state_flags, (1 << RECORDING)
+eeprom_write_ptr_h: ; save where we stopped recording in case of power loss
+    ; wait for completion of previous write
+    sbic    EECR, EEPE
+    rjmp    eeprom_write_ptr_h
+
+    ; set programming mode
+    ldi     r16, (0 << EEPM1) | (0 << EEPM0)
+    out     EECR, r16
+
+    ; write address
+    ldi     r16, high(PTR_SAVE_H)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_H)
+    out     EEARL, r16
+
+    ; do EEPROM write
+    out     EEDR, YH ; data to write
+    sbi     EECR, EEMPE ; master program enable
+    sbi     EECR, EEPE ; start write
+eeprom_write_ptr_l:
+    ; wait for completion of previous write
+    sbic    EECR, EEPE
+    rjmp    eeprom_write_ptr_l
+
+    ; set programming mode
+    ldi     r16, (0 << EEPM1) | (0 << EEPM0)
+    out     EECR, r16
+
+    ; write address
+    ldi     r16, high(PTR_SAVE_L)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_L)
+    out     EEARL, r16
+
+    ; do EEPROM write
+    out     EEDR, YL ; data to write
+    sbi     EECR, EEMPE ; master program enable
+    sbi     EECR, EEPE ; start write
+
     rjmp    wait_loop
 
 ; input handlers
