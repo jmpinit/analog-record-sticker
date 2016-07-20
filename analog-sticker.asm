@@ -13,6 +13,7 @@
 .define SAMPLES_PER_SEC (SAMPLE_COUNT / SAMPLE_TIME)
 .define SAMPLE_TOP      (F_CPU / 4096 / SAMPLES_PER_SEC)
 .define DEBOUNCE_TICKS  0 ; sample ticks before firing input events
+.define PULSE_TIME      (DEBOUNCE_TICKS+2)
 
 .define PIN_IN          PB2
 .define PIN_OUT         PB0
@@ -132,7 +133,7 @@ not_recording:
     ; so stop playing
 
     ; signal with done pin
-    ldi     irq_scrap_a, DEBOUNCE_TICKS+1
+    ldi     irq_scrap_a, PULSE_TIME
     mov     done_pulse_timer, irq_scrap_a
     sbi     PORTB, PIN_DONE
     sbi     DDRB, PIN_DONE ; make output, normally hi-z
