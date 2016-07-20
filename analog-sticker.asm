@@ -122,7 +122,7 @@ timer_tick_sample:
 
     ; save adc reading at current buffer index
     ; and increment index
-.include "eeprom-write.asm"
+;.include "eeprom-write.asm"
     st      X+, irq_scrap_a
     movw    YH:YL, XH:XL ; keep track of end of sample
 
@@ -214,6 +214,7 @@ restore_loop:
     ; read value from eeprom
     sbi     EECR, EERE ; trigger start
     in      r16, EEDR ; get data
+    ldi     r16, 0 ; FIXME
 
     ; increment address
     adiw    r31:r30, 1
@@ -234,7 +235,7 @@ restore_ptr_h:
     ; start eeprom read by writing EERE
     ; read value from eeprom
     sbi     EECR, EERE ; trigger start
-    in      YH, EEDR ; get data
+    ;in      YH, EEDR ; get data
 restore_ptr_l:
     ; wait for previous eeprom operation to finish
     sbic    EECR, EEPE
@@ -249,7 +250,7 @@ restore_ptr_l:
     ; start eeprom read by writing EERE
     ; read value from eeprom
     sbi     EECR, EERE ; trigger start
-    in      YL, EEDR ; get data
+    ;in      YL, EEDR ; get data
 done_restoring:
     ret
 
