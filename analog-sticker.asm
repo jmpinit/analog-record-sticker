@@ -7,8 +7,8 @@
 .define STACK_SIZE      12 ; bytes
 .define DATA_END        (RAMEND-STACK_SIZE) ; end of buffer
 .define SAMPLE_COUNT    (DATA_END-SRAM_START)
-.define PTR_SAVE_H      510
-.define PTR_SAVE_L      511
+.define PTR_SAVE_H      (DATA_END+1)
+.define PTR_SAVE_L      (DATA_END+2)
 
 .define F_CPU           8000000
 .define SAMPLE_TIME     30 ; seconds
@@ -38,6 +38,7 @@
 .define TRIGGER_RELEASED    3
 
 ; registers
+.def startup_timer      = r10
 .def eeprom_l           = r11
 .def eeprom_h           = r12
 .def done_pulse_timer   = r13
@@ -97,8 +98,8 @@ timer_tick:
     dec     done_pulse_timer
     brne    done_pulse_handling
 end_pulse:
-    cbi     PORTB, PIN_DONE
-    cbi     DDRB, PIN_DONE ; leave hi-z
+    ;FIXMEcbi     PORTB, PIN_DONE
+    ;FIXMEcbi     DDRB, PIN_DONE ; leave hi-z
 
 done_pulse_handling:
 
@@ -109,7 +110,7 @@ done_pulse_handling:
 
     ; at end of buffer
     ; so stop what we were doing
-    clr     state_flags
+    andi    state_flags, ~0x3
     rjmp    timer_done
 
 timer_tick_sample:
@@ -122,7 +123,10 @@ timer_tick_sample:
 
     ; save adc reading at current buffer index
     ; and increment index
-;.include "eeprom-write.asm"
+    cli
+.include "eeprom-write.asm"
+    sei
+
     st      X+, irq_scrap_a
     movw    YH:YL, XH:XL ; keep track of end of sample
 
@@ -140,8 +144,8 @@ not_recording:
     ; signal with done pin
     ldi     irq_scrap_a, PULSE_TIME
     mov     done_pulse_timer, irq_scrap_a
-    sbi     PORTB, PIN_DONE
-    sbi     DDRB, PIN_DONE ; make output, normally hi-z
+    ;FIXMEsbi     PORTB, PIN_DONE
+    ;FIXMEsbi     DDRB, PIN_DONE ; make output, normally hi-z
 
     ; mark not playing
     cbr     state_flags, (1 << PLAYING)
@@ -163,7 +167,7 @@ play_sample:
     lpm     irq_scrap_a, Z
 
     ; FIXME temporary multiplier
-    lsl     irq_scrap_a
+    ;lsl     irq_scrap_a
 
     out     OCR0A, irq_scrap_a
 
@@ -197,6 +201,38 @@ done_writing:
 ; restore the sample buffer from eeprom
 restore_buffer:
     reset_buffer_ptr
+restore_ptr_h:
+    ; wait for previous eeprom operation to finish
+    sbic    EECR, EEPE
+    rjmp    restore_ptr_h
+
+    ; set eeprom address
+    ldi     r16, high(PTR_SAVE_H)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_H)
+    out     EEARL, r16
+
+    ; start eeprom read by writing EERE
+    ; read value from eeprom
+    sbi     EECR, EERE ; trigger start
+    in      YH, EEDR ; get data
+    ldi     YH, high(DATA_END) ; FIXME
+restore_ptr_l:
+    ; wait for previous eeprom operation to finish
+    sbic    EECR, EEPE
+    rjmp    restore_ptr_l
+
+    ; set eeprom address
+    ldi     r16, high(PTR_SAVE_L)
+    out     EEARH, r16
+    ldi     r16, low(PTR_SAVE_L)
+    out     EEARL, r16
+
+    ; start eeprom read by writing EERE
+    ; read value from eeprom
+    sbi     EECR, EERE ; trigger start
+    in      YL, EEDR ; get data
+    ldi     YL, low(DATA_END) ; FIXME
 
     ; start at beginning of eeprom
     clr     ZH
@@ -214,43 +250,13 @@ restore_loop:
     ; read value from eeprom
     sbi     EECR, EERE ; trigger start
     in      r16, EEDR ; get data
-    ldi     r16, 0 ; FIXME
+    ldi     r16, 127 ; FIXME
 
     ; increment address
     adiw    r31:r30, 1
 
     st      X+, r16
     brne_i_16 restore_loop, XH, XL, DATA_END
-restore_ptr_h:
-    ; wait for previous eeprom operation to finish
-    sbic    EECR, EEPE
-    rjmp    restore_ptr_h
-
-    ; set eeprom address
-    ldi     r16, high(PTR_SAVE_H)
-    out     EEARH, r16
-    ldi     r16, low(PTR_SAVE_H)
-    out     EEARL, r16
-
-    ; start eeprom read by writing EERE
-    ; read value from eeprom
-    sbi     EECR, EERE ; trigger start
-    ;in      YH, EEDR ; get data
-restore_ptr_l:
-    ; wait for previous eeprom operation to finish
-    sbic    EECR, EEPE
-    rjmp    restore_ptr_l
-
-    ; set eeprom address
-    ldi     r16, high(PTR_SAVE_L)
-    out     EEARH, r16
-    ldi     r16, low(PTR_SAVE_L)
-    out     EEARL, r16
-
-    ; start eeprom read by writing EERE
-    ; read value from eeprom
-    sbi     EECR, EERE ; trigger start
-    ;in      YL, EEDR ; get data
 done_restoring:
     ret
 
@@ -262,6 +268,7 @@ reset:
     ; setup pins for IO
     ldi     r16, (1 << PIN_OUT)
     out     DDRB, r16
+    sbi     DDRB, PIN_DONE ; FIXME
 
     ; setup ADC
 
@@ -315,6 +322,8 @@ reset:
     ; initialize buffer
     rcall   restore_buffer
 
+    ldi     state_flags, (1 << HANDLED_RECORD) | (1 << HANDLED_TRIGGER)
+
     ; enable interrupts
     sei
 
@@ -341,50 +350,17 @@ start_recording:
 
     ; signal to start recording
     sbr     state_flags, (1 << RECORDING)
+    sbi     PINB, PIN_DONE
 
     rjmp    wait_loop
 
 stop_recording:
+    cli
     cbr     state_flags, (1 << RECORDING)
-eeprom_write_ptr_h: ; save where we stopped recording in case of power loss
-    ; wait for completion of previous write
-    sbic    EECR, EEPE
-    rjmp    eeprom_write_ptr_h
+.include "save-pointer.asm"
 
-    ; set programming mode
-    ldi     r16, (0 << EEPM1) | (0 << EEPM0)
-    out     EECR, r16
-
-    ; write address
-    ldi     r16, high(PTR_SAVE_H)
-    out     EEARH, r16
-    ldi     r16, low(PTR_SAVE_H)
-    out     EEARL, r16
-
-    ; do EEPROM write
-    out     EEDR, YH ; data to write
-    sbi     EECR, EEMPE ; master program enable
-    sbi     EECR, EEPE ; start write
-eeprom_write_ptr_l:
-    ; wait for completion of previous write
-    sbic    EECR, EEPE
-    rjmp    eeprom_write_ptr_l
-
-    ; set programming mode
-    ldi     r16, (0 << EEPM1) | (0 << EEPM0)
-    out     EECR, r16
-
-    ; write address
-    ldi     r16, high(PTR_SAVE_L)
-    out     EEARH, r16
-    ldi     r16, low(PTR_SAVE_L)
-    out     EEARL, r16
-
-    ; do EEPROM write
-    out     EEDR, YL ; data to write
-    sbi     EECR, EEMPE ; master program enable
-    sbi     EECR, EEPE ; start write
-
+    sbi     PINB, PIN_DONE
+    sei
     rjmp    wait_loop
 
 ; input handlers
@@ -393,13 +369,18 @@ handle_record_pressed:
     cbr     event_flags, (1 << RECORD_PRESSED)
     rjmp    start_recording
 
-handle_record_released: ; works fine
+handle_record_released:
     cbr     event_flags, (1 << RECORD_RELEASED)
     rjmp    stop_recording
 
 handle_trigger_pressed:
     cbr     event_flags, (1 << TRIGGER_PRESSED)
     rjmp    start_playback
+
+handle_trigger_released:
+    cbr     event_flags, (1 << TRIGGER_RELEASED)
+    ; do nothing
+    rjmp    wait_loop
 
 start:
 wait_loop:
@@ -411,6 +392,9 @@ wait_loop:
 
     sbrc    event_flags, TRIGGER_PRESSED
     rjmp    handle_trigger_pressed
+
+    sbrc    event_flags, TRIGGER_RELEASED
+    rjmp    handle_trigger_released
 
     rjmp    wait_loop
 
